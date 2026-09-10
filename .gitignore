@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Virtual environment
+venv/
+.venv/
+
+# Datasets (downloaded on demand, too large for git)
+data/
+training_models/data/cifar-10-python.tar.gz
+
+# Trained model weights / checkpoints
+*.pth
+*.pt
+*.ckpt
+
+# Cluster / job logs
+slurm-*.out
+*.log
+
+# Editor / OS cruft
+.DS_Store
+.vscode/

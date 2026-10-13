@@ -1,3 +1,22 @@
+# =============================================================================
+# EXPERIMENTAL - NOT in either paper.
+# Run with:  --mode exp_echo_srd          (formerly: EchoSRD_with_revision)
+# -----------------------------------------------------------------------------
+# "Echo"/Alternating SRD: builds TWO decay curves from the same family with
+# different alpha (alpha_odd / alpha_even) and alternates them on odd/even
+# epochs, decaying down to a keep_floor fraction, then a final full-data revision.
+#
+# IMPORTANT: despite living next to the ADD variants historically, this is NOT
+# an ADD variant. It is fully DETERMINISTIC - there is no Delta_t feedback
+# signal and no accept/reject step. The oscillation is pre-scheduled, which is
+# precisely the "fixed schedule" property ADD sets out to remove.
+#
+# SUBSET SAMPLING (paradigm B): _build_subset_loader(), randperm + SubsetRandomSampler.
+# EFFECTIVE EPOCHS: total_bp / data_size, printed as "Effective epochs (float)".
+#
+# start_revision convention here is INVERTED relative to pdd/: <= 0 means
+# "auto-place the revision phase at the end" (epochs - revision_epochs).
+# =============================================================================
 """
 EchoSRD_with_revision.py
 Alternating SRD with TWO schedules (odd/even) + keep floor + final revision

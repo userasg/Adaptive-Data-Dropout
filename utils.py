@@ -375,3 +375,46 @@ def plot_accuracy_time_multi_test(model_name, accuracy, time_per_epoch, samples_
 #     plt.legend()
 #     plt.grid(True)
 #     plt.savefig(save_path)
+
+# =============================================================================
+# AC-PDD (ac_pdd/) - lambda_t schedule.  Used by RatioDBPD.ratio_dbpd and
+# RatioDBPD.ratio_dbpd_floor; nothing else in the repo calls this.
+# =============================================================================
+def get_lambda_t(epoch: int, total_epochs: int, lambda_min: float, lambda_max: float, gamma: float, revision_epochs: int,) -> float:
+    """AC-PDD's composition weight for a given epoch.
+
+    lambda_t ramps from `lambda_min` at epoch 0 to `lambda_max` at the end of
+    the SELECTION phase, shaped by `progress ** gamma`:
+
+        gamma == 1   linear ramp
+        gamma  > 1   slow start, fast finish
+        gamma  < 1   fast start, slow finish
+
+    Then it pins at `lambda_max` for the revision phase (where it is recorded
+    but unused, since revision trains on the full dataset either way).
+
+    NOTE on the argument name: `revision_epochs` is passed `start_revision` by
+    both callers, which makes `selection_epochs` work out to exactly
+    `start_revision` - i.e. the ramp spans epochs 0 .. start_revision-1, the
+    epochs that actually do dropout selection. The two-step arithmetic below
+    is upstream's and is kept as-is, but read it as "selection_epochs ==
+    start_revision" rather than trusting the parameter name.
+
+    `gamma` here is the ramp exponent and has nothing to do with the StepLR
+    gamma=0.98 learning-rate decay used inside the AC-PDD training loops.
+    """
+    revision = total_epochs - revision_epochs
+    selection_epochs = total_epochs - revision
+
+    if selection_epochs <= 1:
+        return lambda_max
+
+    if epoch >= selection_epochs:
+        return lambda_max
+
+    progress = epoch / (selection_epochs - 1)
+    progress = max(0.0, min(1.0, progress))
+
+    lambda_t = lambda_min + (lambda_max - lambda_min) * (progress ** gamma)
+
+    return lambda_t

@@ -1,3 +1,16 @@
+# =============================================================================
+# EXPERIMENTAL - NOT in either paper.
+# Run with:  --mode exp_genetic                      (formerly: gaDropout)
+# -----------------------------------------------------------------------------
+# Genetic algorithm over PER-SAMPLE survival scores. K_t still follows a PDD SRD
+# decay curve, but WHICH samples are kept is decided by a GA rather than by
+# confidence or uniform randomness. See the file docstring below for the full
+# chromosome / fitness / selection / mutation design.
+#
+# SUBSET SAMPLING: softmax roulette-wheel selection over survival scores, then
+# SubsetRandomSampler (paradigm B).
+# EFFECTIVE EPOCHS: total_bp / data_size.
+# =============================================================================
 """
 gaDropout.py
 Genetic Algorithm with per-sample survival scores for PDD.

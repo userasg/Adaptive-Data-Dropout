@@ -1,3 +1,39 @@
+# =============================================================================
+# ADAPTIVE DATA DROPOUT (ADD) - VARIANT 2 : Adaptive-T (keep-fraction)
+# Paper: ADD S3.3 "Variant 2: Adaptive Keep-Fraction (Adaptive-T)" -> paper/ADD.pdf
+# Run with:  --mode add_adaptive_t           (formerly: SARevision / train_with_sa)
+# Result-file tag: "<model>_<threshold>_SA_v3_scalar"
+# -----------------------------------------------------------------------------
+# |D_t| = T_t * N, i.e. the temperature IS the fraction of data kept.
+# T_t tracks a base trajectory T_base(t) but may deviate on feedback.
+#
+# T_base(t): built by _build_base_temperature_schedule(), supporting "linear",
+# "geometric" and the five PDD Appendix C analytic curves, each rescaled to land
+# exactly in [Tfinal, T0]. Default cooling = "log", T0 = 1.0, Tfinal = 0.05.
+#
+# ACCEPT / REHEAT (see the "---- SA update ----" block in train_with_sa):
+#   Delta_t = A_t - A_{t-1}                                  training accuracy
+#   Delta > delta_threshold -> accept     T_{t+1} = T_base(t+1)      (follow schedule)
+#   otherwise               -> Metropolis: accept if rand() < exp(scalar*Delta/T)
+#   reject                  -> REHEAT     T_{t+1} = min(T_0, gamma * T_t)
+# with gamma = SA_REHEAT_MULT = 2.5 > 1, exactly the paper's reheating factor.
+# The REHEAT branch is what produces the sample-count spikes in ADD Figure 6.
+#
+# SUBSET SAMPLING (paradigm B): same as adaptive_alpha.py - _build_subset_loader()
+# draws |D_t| indices from the FULL dataset via torch.randperm + SubsetRandomSampler,
+# reseeded cfg.seed + epoch each epoch. Jaccard overlap with the previous epoch's
+# subset is logged to verify independence across epochs (ADD S3.4).
+#
+# EFFECTIVE EPOCHS: total_bp accumulates labels.size(0) per batch; printed as
+# "Effective epochs (float)" = total_bp / data_size. Returns (model, total_bp).
+#
+# TWO FIXES NOT IN THE PAPER (both documented inline, both needed for a fair
+# baseline comparison):
+#   1. Step-based StepLR  - LR decays per optimiser step, not per epoch, so a
+#      shrinking subset does not secretly accelerate LR decay.
+#   2. reduction='sum' / batch_size - stops the short final mini-batch getting a
+#      higher per-sample gradient weight.
+# =============================================================================
 """
 SARevision.py
 Simulated Annealing–driven dynamic dropout scheduler

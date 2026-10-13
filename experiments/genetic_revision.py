@@ -1,3 +1,12 @@
+# =============================================================================
+# EXPERIMENTAL - NOT in either paper.
+# Run with:  --mode exp_genetic_legacy          (formerly: GeneticRevision)
+# -----------------------------------------------------------------------------
+# Earlier GA-driven dropout scheduler, superseded by experiments/genetic_dropout.py.
+# Unlike every other mode, this one needs a TRAIN/VAL split: main.py carves 10%
+# out of the training set (make_train_val_loaders) before constructing it, and
+# maps --threshold onto the module-level KEEP_FLOOR.
+# =============================================================================
 # GeneticRevision.py
 # Simple GA over a single decay schedule (inverse power).
 # Evolved genes: beta (schedule steepness) and gaussian noise level.

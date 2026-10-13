@@ -1,3 +1,11 @@
+# =============================================================================
+# EXPERIMENTAL - NOT in either paper.
+# Run with:  --mode exp_switcher                  (formerly: SimpleSwitcher)
+# -----------------------------------------------------------------------------
+# Subclasses pdd.pdd_training_variants.TrainRevision and periodically SWITCHES
+# between dropout strategies mid-run (every `switch_interval` epochs) instead of
+# committing to one schedule for the whole run.
+# =============================================================================
 import random
 import time
 import torch
@@ -6,7 +14,7 @@ import numpy as np
 from tqdm import tqdm
 from torch.optim.lr_scheduler import StepLR
 from torch import optim
-from selective_gradient import TrainRevision
+from pdd.pdd_training_variants import TrainRevision
 from utils import log_memory, plot_accuracy_time_multi, plot_accuracy_time_multi_test
 
 class SimpleSwitcher(TrainRevision):
@@ -76,7 +84,7 @@ class SimpleSwitcher(TrainRevision):
 
                 if not use_full_data:
                     # Apply schedule
-                    scaled_value = self.current_schedule(epoch + 1, self.data_size, alpha=2)
+                    scaled_value = self.current_schedule(epoch + 1, self.data_size, alpha=2, beta=1)  # beta was missing -> TypeError; 1.0 matches every other call site
                     sample_ratio = scaled_value / self.data_size
                     selected_count = max(1, int(sample_ratio * inputs.size(0)))
                     selected_indices = torch.randperm(inputs.size(0))[:selected_count]

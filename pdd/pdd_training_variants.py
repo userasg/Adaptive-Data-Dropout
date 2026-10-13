@@ -1,3 +1,54 @@
+"""
+pdd_training_variants.py  (formerly: selective_gradient.py)
+===========================================================
+PROGRESSIVE DATA DROPOUT (PDD) - all training variants.
+Paper: "Progressive Data Dropout: An Embarrassingly Simple Approach to Train
+        Faster", Shriram M S et al., NeurIPS 2025.   -> paper/PDD.pdf
+
+Every variant of the paper is a method on the single `TrainRevision` class
+below. Quick index (see the banner comment above each method for detail):
+
+    PAPER SECTION                        METHOD                         --mode
+    -----------------------------------  -----------------------------  ---------------------
+    S3.2  V1  DBPD                       train_with_revision            pdd_dbpd
+    S3.3  V2  SRD                        train_with_percentage          pdd_srd
+    S3.4  V3  SMRD                       train_with_random              pdd_smrd
+    App.C (1) Power-Law Decay            train_with_power_law           pdd_approx_power_law
+    App.C (2) Exponential Decay          train_with_exponential         pdd_approx_exponential
+    App.C (3) Logarithmic Decay          train_with_log                 pdd_approx_log
+    App.C (4) Inverse Linear Decay       train_with_inverse_linear      pdd_approx_inv_lin
+    App.C (5) Sigmoid-Complement Decay   train_with_sigmoid_complement  pdd_approx_sigmoid
+    (not in paper) prototype             train_selective                pdd_selective_gradient
+    (not in paper) prototype             train_selective_epoch          pdd_selective_epoch
+    (not in paper) 3D/video port of DBPD train_with_revision_3d         pdd_dbpd_3d
+
+SHARED MECHANICS
+----------------
+self.threshold  == the paper's confidence threshold tau.
+start_revision  == the epoch at which the revision phase BEGINS. Epochs
+                   < start_revision use dropout; epochs >= start_revision use
+                   the full dataset (the paper's D_T = D_0).
+                   NOTE: --start_revision 0 therefore disables dropout entirely
+                   and trains a plain baseline. This is the OPPOSITE convention
+                   to experiments/echo_srd.py and the add/ variants, where 0
+                   means "auto-place revision at the end".
+
+SUBSET SAMPLING (paradigm A - per-batch masking)
+------------------------------------------------
+Every variant in this file samples WITHIN each batch rather than rebuilding the
+DataLoader:
+        k   = int(keep_ratio * batch_size)
+        idx = torch.randperm(batch_size)[:k]
+The full dataset is therefore still loaded and forward-passed every epoch; only
+backprop is restricted to the subset (PDD S3.5). Contrast with the add/ and
+experiments/echo_srd.py variants, which use SubsetRandomSampler to build a
+genuinely smaller epoch-level loader (paradigm B).
+
+EFFECTIVE EPOCHS
+----------------
+Each method accumulates `num_step` at the point of backprop ONLY, and returns
+(model, num_step). main.py then computes EE = num_step / dataset_size.
+"""
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -20,6 +71,15 @@ class TrainRevision:
         self.save_path = save_path
         self.threshold = threshold
     #train hard samples only 
+    # =========================================================================
+    # PROTOTYPE - not reported in either paper.            --mode pdd_selective_gradient
+    # -------------------------------------------------------------------------
+    # Trains on hard samples ONLY, for every epoch, with NO revision phase.
+    # This is DBPD's selection rule without the final full-dataset pass.
+    # WARNING: this method has a pre-existing bug - `val_loss` is referenced
+    # before assignment and `criterion(correct, total)` is called on ints. It
+    # will raise at the end of epoch 1. Left untouched by the reorganisation.
+    # =========================================================================
     def train_selective(self):
         #all setup
         self.model.to(self.device)
@@ -157,6 +217,12 @@ class TrainRevision:
 
         return self.model
     #gradullay reintroduces easier examples 
+    # =========================================================================
+    # PROTOTYPE - not reported in either paper.               --mode pdd_selective_epoch
+    # -------------------------------------------------------------------------
+    # Like train_selective, but gradually reintroduces easy (already-learned)
+    # examples as training proceeds instead of a single final revision epoch.
+    # =========================================================================
     def train_selective_epoch(self):
         self.model.to(self.device)
         save_path = self.save_path
@@ -278,6 +344,24 @@ class TrainRevision:
 
         return self.model
 
+    # =========================================================================
+    # PDD VARIANT 1 : DBPD - Difficulty-Based Progressive Dropout
+    # Paper: PDD S3.2 "Variant 1: Difficulty-First Training"   --mode pdd_dbpd
+    # -------------------------------------------------------------------------
+    # D_t = {(x_i, y_i) in D | p_t(x_i) < tau}      for t < start_revision
+    # D_T = D_0                                     for t >= start_revision
+    #
+    # SELECTION (no subset *sampling* - the mask IS the subset, deterministic
+    # given the model state):
+    #     tau == 0 -> mask = (preds != labels)          keep only misclassified
+    #     tau  > 0 -> mask = (p_true_class < tau)       keep only low-confidence
+    # NOTE: the code uses the probability of the TRUE class, matching the paper's
+    # prose in S3.2; Algorithm 1 in the appendix writes max(softmax) instead.
+    #
+    # Two forward passes per batch: one under no_grad to score every sample
+    # (the paper's "forward pass on all samples"), one on the masked subset
+    # which is the only thing backprop sees. num_step counts the latter.
+    # =========================================================================
     def train_with_revision(self, start_revision, task):
 
         save_path = self.save_path
@@ -469,6 +553,22 @@ class TrainRevision:
 
         return self.model, num_step
     
+    # =========================================================================
+    # PDD VARIANT 3 : SMRD - Schedule-Matched Random Dropout
+    # Paper: PDD S3.4 "Is Difficulty Scoring Necessary?"       --mode pdd_smrd
+    # -------------------------------------------------------------------------
+    # Best-performing variant in PDD Table 1.
+    #
+    # Computes the DBPD confidence mask, then DISCARDS which samples it picked
+    # and keeps only HOW MANY (|M|), drawing that many at random instead:
+    #     num_to_select = mask.sum()                     <- schedule matched
+    #     indices       = torch.randperm(batch)[:num_to_select]   <- identity random
+    # This is Algorithm 1's red SMRD line, executed ONLINE per batch. It avoids
+    # the paper's stated drawback that SMRD "relies on the difficulty-based
+    # schedule computed in a separate run" - no separate DBPD run is needed.
+    #
+    # SUBSET SAMPLING: uniform without replacement within the batch (randperm).
+    # =========================================================================
     def train_with_random(self, start_revision, task):
 
         save_path = self.save_path
@@ -671,6 +771,12 @@ class TrainRevision:
 
         return self.model, num_step
 
+    # =========================================================================
+    # DBPD port for 3D / video inputs - not separately reported.  --mode pdd_dbpd_3d
+    # -------------------------------------------------------------------------
+    # Identical selection logic to train_with_revision (PDD Variant 1), adapted
+    # for 5D tensors (e.g. medmnist3D, Cityscapes-style data).
+    # =========================================================================
     def train_with_revision_3d(self, start_revision, task):
 
         save_path = self.save_path
@@ -865,6 +971,21 @@ class TrainRevision:
 
         return self.model, num_step
     
+    # =========================================================================
+    # PDD VARIANT 2 : SRD - Scalar Random Dropout
+    # Paper: PDD S3.3 "Variant 2: Scalar-Based Random Dropout"  --mode pdd_srd
+    # -------------------------------------------------------------------------
+    # |D_t| = alpha^t * N, with no per-sample evaluation at all.
+    #
+    #     decay_factor   = 0.95 ** epoch          <- the paper's "SRD 0.95"
+    #     selected_count = int(decay_factor * batch_size)
+    #     selected_idx   = torch.randperm(batch_size)[:selected_count]
+    #
+    # SUBSET SAMPLING: uniform without replacement within the batch.
+    # HEADS-UP: gamma is hardcoded to 0.95 on the decay_factor line. Reproducing
+    # the paper's SRD 0.98 (MAE pretraining) or SRD 0.99 needs an edit there -
+    # it is not exposed as a CLI flag.
+    # =========================================================================
     def train_with_percentage(self, start_revision):
         save_path = self.save_path
         self.model.to(self.device)
@@ -1001,6 +1122,10 @@ class TrainRevision:
 
     #math function based droput schedules
     #inverse linear -> f(x,a) = 1/x+a
+    # ---- PDD Appendix C, eq. (4): Inverse Linear Decay  f(x;a) = 1/(x + a) ----
+    # Pure schedule function. Returns the number of samples to keep at `epoch`,
+    # normalised so the curve peaks at `data_size` (the paper's "normalized to
+    # output a maximum of 50,000 samples").
     def inverse_linear(self, epoch, data_size, alpha, beta):
         # no “if last epoch then full data” spike any more
         x = np.arange(1, self.epochs + 1)
@@ -1009,6 +1134,15 @@ class TrainRevision:
         return y_scaled[epoch - 1] 
 
 
+    # =========================================================================
+    # PDD Appendix C approximation (4): INVERSE LINEAR    --mode pdd_approx_inv_lin
+    # -------------------------------------------------------------------------
+    # Schedule: self.inverse_linear(), alpha = 2.0, beta = 1.0.
+    # SUBSET SAMPLING: k = max(1, int(ratio * B)); idx = randperm(B)[:k]
+    # NOTE: this loop accepts `start_revision` but never uses it - there is NO
+    # final full-dataset revision epoch here, unlike the paper's piecewise
+    # definition f(x) = N when x = T.
+    # =========================================================================
     def train_with_inverse_linear(self, start_revision, data_size):
         save_path = self.save_path
         self.model.to(self.device)
@@ -1250,6 +1384,7 @@ class TrainRevision:
     #     return self.model, num_step
     
     #logarithmic decay -> f(x,a) = 1/log(x+a)
+    # ---- PDD Appendix C, eq. (3): Logarithmic Decay  f(x;a) = 1/log(x + a) ----
     def log_schedule(self, epoch, data_size, alpha, beta):
         """
         Logarithmic‐decay schedule with two scalars alpha and beta:
@@ -1402,6 +1537,14 @@ class TrainRevision:
 
     #     return self.model, num_step 
 
+    # =========================================================================
+    # PDD Appendix C approximation (3): LOGARITHMIC        --mode pdd_approx_log
+    # -------------------------------------------------------------------------
+    # The closest match to oracle SMRD per PDD Table 21 ("SMRD (log decay)").
+    # Schedule: self.log_schedule(), alpha = 2.0, beta = 1.0.
+    # SUBSET SAMPLING: k = max(1, int(keep_ratio * B)); idx = randperm(B)[:k]
+    # NOTE: no final revision epoch (see train_with_inverse_linear).
+    # =========================================================================
     def train_with_log(self, start_revision, data_size):
         """
         Always drop by the learned log_schedule; no full‐data pass at final epoch.
@@ -1509,6 +1652,7 @@ class TrainRevision:
 
     
     # power law decay -> f(x,a) = 1/x^a
+    # ---- PDD Appendix C, eq. (1): Power-Law Decay  f(x;a) = 1/x^a ----
     def power_law_decay(self, epoch, data_size, alpha, beta):
         """
         Power‐law decay with two scalars α and β:
@@ -1661,6 +1805,13 @@ class TrainRevision:
 
     #     return self.model, num_step
 
+    # =========================================================================
+    # PDD Appendix C approximation (1): POWER-LAW     --mode pdd_approx_power_law
+    # -------------------------------------------------------------------------
+    # Schedule: self.power_law_decay(), alpha = 2.0, beta = 1.0.
+    # SUBSET SAMPLING: k = max(1, int(keep_ratio * B)); idx = randperm(B)[:k]
+    # NOTE: no final revision epoch (see train_with_inverse_linear).
+    # =========================================================================
     def train_with_power_law(self, start_revision, data_size):
         """
         Always apply selective dropout via power_law_decay(alpha, beta);
@@ -1768,6 +1919,7 @@ class TrainRevision:
 
 
     # exponential decay -> f(x,a) = e^{-ax}
+    # ---- PDD Appendix C, eq. (2): Exponential Decay  f(x;a) = e^(-a*x) ----
     def exponential_decay(self, epoch, data_size, alpha, beta):
         """
         Exponential decay with two scalars α and β:
@@ -1917,6 +2069,13 @@ class TrainRevision:
 
     #     return self.model, num_step
 
+    # =========================================================================
+    # PDD Appendix C approximation (2): EXPONENTIAL  --mode pdd_approx_exponential
+    # -------------------------------------------------------------------------
+    # Schedule: self.exponential_decay(), alpha = 0.1, beta = 1.0.
+    # SUBSET SAMPLING: k = max(1, int(keep_ratio * B)); idx = randperm(B)[:k]
+    # NOTE: no final revision epoch (see train_with_inverse_linear).
+    # =========================================================================
     def train_with_exponential(self, start_revision, data_size):
         save_path = self.save_path
         self.model.to(self.device)
@@ -2023,6 +2182,7 @@ class TrainRevision:
 
 
     # sigmoid complement decay -> f(x,a) = 1 - 1 / (1 + e^{-ax})
+    # ---- PDD Appendix C, eq. (5): Sigmoid-Complement  f(x;a) = 1 - 1/(1+e^-ax) ----
     def sigmoid_complement_decay(self, epoch, data_size, alpha, beta):
         """
         Sigmoid-complement decay with two scalars α and β:
@@ -2035,6 +2195,14 @@ class TrainRevision:
         return y_scaled[epoch - 1]
 
 
+    # =========================================================================
+    # PDD Appendix C approximation (5): SIGMOID-COMPLEMENT --mode pdd_approx_sigmoid
+    # -------------------------------------------------------------------------
+    # Schedule: self.sigmoid_complement_decay(), alpha = 0.1, beta = 1.0.
+    # SUBSET SAMPLING: k = max(1, int(keep_ratio * B)); idx = randperm(B)[:k]
+    # NOTE: docstring states "full-data branches removed (always drops)" - no
+    # final revision epoch.
+    # =========================================================================
     def train_with_sigmoid_complement(self, start_revision, data_size):
         """
         Main training loop applying GA-driven sigmoid-complement dropout per batch.

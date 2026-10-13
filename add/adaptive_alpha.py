@@ -1,3 +1,37 @@
+# =============================================================================
+# ADAPTIVE DATA DROPOUT (ADD) - VARIANT 1 : Adaptive-alpha
+# Paper: ADD S3.2 "Variant 1: Adaptive Decay (Adaptive-alpha)" -> paper/ADD.pdf
+# Run with:  --mode add_adaptive_alpha        (formerly: saRevisionSimple)
+# Result-file tag: "<model>_<threshold>_SA_simple"
+# -----------------------------------------------------------------------------
+# |D_t| = f(t; alpha_t) * N   where f is one of the five PDD Appendix C decay
+# curves and alpha_t is updated online from the training-accuracy feedback
+# signal  Delta_t = A_t - A_{t-1}.
+#
+# ACCEPT / REJECT (see the "---- SA update ----" block in train_with_sa):
+#   proposal   a' = clip(alpha +/- alpha_step, 0.1, 20.0)       random direction
+#   Delta > 0  -> accept                                        (direct improvement)
+#   Delta <= 0 -> Metropolis: accept if rand() < exp(Delta / T)
+#   reject     -> alpha -= abs(N(0, 3 * alpha_step))            asymmetric spike,
+#                 ALWAYS loosens the schedule => more data next epoch. This is
+#                 ADD Figure 3's "Noise added to alpha" box and produces the
+#                 reheating spikes seen in ADD Figure 6.
+#
+# NOTE: T here is a pure Metropolis temperature (acceptance probability only),
+# NOT a keep-fraction. That is adaptive_keep_fraction.py's job.
+#
+# SUBSET SAMPLING (paradigm B): _build_subset_loader() draws |D_t| indices from
+# the FULL dataset with torch.randperm (without replacement) and wraps them in a
+# SubsetRandomSampler, i.e. a genuinely smaller epoch-level DataLoader. Reseeded
+# each epoch as cfg.seed + epoch, so draws are independent across epochs (ADD S3.4).
+#
+# EFFECTIVE EPOCHS: total_bp accumulates labels.size(0) per batch; printed at the
+# end as "Effective epochs (float)" = total_bp / data_size. Returns (model, total_bp).
+#
+# KNOWN CONFOUND (documented inline in train_with_sa): uses epoch-based StepLR,
+# so a shrinking subset means the LR decays after fewer optimiser steps than the
+# baseline. adaptive_keep_fraction.py fixes this; this file deliberately does not.
+# =============================================================================
 """
 saRevisionSimple.py
 Simulated Annealing–driven dynamic dropout scheduler (Simple)

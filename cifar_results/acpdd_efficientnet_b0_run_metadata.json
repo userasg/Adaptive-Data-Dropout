@@ -1,0 +1,15 @@
+{
+  "run_id": "20261028T175433_efficientnet_b0_0.3_498be0cf",
+  "model_name": "efficientnet_b0_0.3",
+  "architecture": "efficientnet_b0_0.3",
+  "dataset": "cifar",
+  "optimizer": "AdamW",
+  "learning_rate": 0.0003,
+  "total_epochs": 200,
+  "batch_size": 32,
+  "threshold": 0.3,
+  "start_revision": 199,
+  "mode": "train_with_revision",
+  "seed": 123,
+  "timestamp": "2026-10-28 17:54:33"
+}

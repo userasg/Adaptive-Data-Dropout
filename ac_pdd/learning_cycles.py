@@ -275,6 +275,14 @@ class MetricsRecorder:
         millions of rows over a full run). Call only once the run has
         finished successfully - crashed/incomplete runs leave the parts as
         they are, individually readable, for inspection.
+
+        Each part is deleted as soon as it has been fully copied, so peak
+        extra disk use is roughly one part rather than a second copy of the
+        whole table (a full CIFAR-100 run is several GB; copy-then-delete ran
+        the disk out of space at the very end of a 200-epoch run). If the
+        merge fails part-way, the writer is still closed so the partial
+        "{sample_path}.tmp" stays a valid parquet file, and the parts not yet
+        copied (including the one that failed) are left on disk.
         """
         self.finalize_epoch_samples()
         parts = sorted(
@@ -285,22 +293,24 @@ class MetricsRecorder:
             return
         tmp_path = f"{self.sample_path}.tmp"
         writer = None
-        for part in parts:
-            with open(part, "rb") as fh:
-                pf = pq.ParquetFile(fh)
-                for record_batch in pf.iter_batches():
-                    batch_table = pa.Table.from_batches([record_batch])
-                    if writer is None:
-                        writer = pq.ParquetWriter(tmp_path, batch_table.schema)
-                    writer.write_table(batch_table)
+        try:
+            for part in parts:
+                with open(part, "rb") as fh:
+                    pf = pq.ParquetFile(fh)
+                    for record_batch in pf.iter_batches():
+                        batch_table = pa.Table.from_batches([record_batch])
+                        if writer is None:
+                            writer = pq.ParquetWriter(tmp_path, batch_table.schema)
+                        writer.write_table(batch_table)
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+        finally:
+            if writer is not None:
+                writer.close()
         if writer is not None:
-            writer.close()
             os.replace(tmp_path, self.sample_path)
-        for part in parts:
-            try:
-                os.remove(part)
-            except OSError:
-                pass
 
     def close(self):
         if self._samples_writer is not None:

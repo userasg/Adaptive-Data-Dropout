@@ -17,6 +17,10 @@ training_models/data/cifar-10-python.tar.gz
 *.pt
 *.ckpt
 
+# AC-PDD per-sample metrics (ac_pdd/learning_cycles.py) - multi-GB, regenerated each run
+*.parquet
+*.parquet.tmp
+
 # Cluster / job logs
 slurm-*.out
 *.log
